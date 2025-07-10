@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  ppt-mcp-stdio:
+    build:
+      context: .
+      dockerfile: Dockerfile.enhanced
+    container_name: ppt-mcp-stdio
+    environment:
+      - TRANSPORT_MODE=stdio
+      - LOG_LEVEL=INFO
+      - PPT_TEMPLATE_PATH=/app/templates
+    stdin_open: true  # Equivalent to -i
+    tty: true         # Equivalent to -t
+    volumes:
+      - ./templates:/app/templates

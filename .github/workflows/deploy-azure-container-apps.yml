@@ -1,0 +1,342 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'ppt_mcp_server.py'
+      - 'tools/**'
+      - 'utils/**'
+      - 'requirements.txt'
+      - 'Dockerfile*'
+      - 'entrypoint.sh'
+      - 'healthcheck.sh'
+      - '.github/workflows/deploy-azure-container-apps.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'ppt_mcp_server.py'
+      - 'tools/**'
+      - 'utils/**'
+      - 'requirements.txt'
+      - 'Dockerfile*'
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - production
+      transport_mode:
+        description: 'Transport mode for deployment'
+        required: false
+        default: 'stdio'
+        type: choice
+        options:
+          - stdio
+          - http
+          - both
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  AZURE_RESOURCE_GROUP: rg-ppt-mcp
+  AZURE_CONTAINER_ENV: ppt-mcp-env
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+        
+    - name: Run tests
+      run: |
+        # Basic import test
+        python -c "import ppt_mcp_server; print('Import successful')"
+        
+        # Test tools modules
+        python -c "from tools import *; print('Tools import successful')"
+        
+        # Test utils modules  
+        python -c "from utils import *; print('Utils import successful')"
+        
+    - name: Security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload security scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  build-and-push-image:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.image-tag.outputs.tag }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Generate image tag
+      id: image-tag
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          TAG="pr-${{ github.event.number }}"
+        else
+          TAG="${{ github.sha }}"
+        fi
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+        
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.enhanced
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          VCS_REF=${{ github.sha }}
+          VERSION=${{ steps.image-tag.outputs.tag }}
+
+  deploy-to-azure:
+    needs: [build-and-test, build-and-push-image]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Set deployment variables
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "DEPLOY_ENV=${{ github.event.inputs.deploy_environment }}" >> $GITHUB_ENV
+          echo "TRANSPORT_MODE=${{ github.event.inputs.transport_mode }}" >> $GITHUB_ENV
+        else
+          echo "DEPLOY_ENV=production" >> $GITHUB_ENV
+          echo "TRANSPORT_MODE=both" >> $GITHUB_ENV
+        fi
+        
+    - name: Deploy Container Apps Job - Stdio Mode
+      if: env.TRANSPORT_MODE == 'stdio' || env.TRANSPORT_MODE == 'both'
+      run: |
+        JOB_NAME="ppt-mcp-job-stdio"
+        IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push-image.outputs.image-tag }}"
+        
+        # Check if job exists
+        if az containerapp job show --name $JOB_NAME --resource-group ${{ env.AZURE_RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "Updating existing Container Apps Job: $JOB_NAME"
+          az containerapp job update \
+            --name $JOB_NAME \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image $IMAGE_URI \
+            --set-env-vars \
+              TRANSPORT_MODE=stdio \
+              LOG_LEVEL=INFO \
+              PPT_TEMPLATE_PATH=/app/templates \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+        else
+          echo "Creating new Container Apps Job: $JOB_NAME"
+          az containerapp job create \
+            --name $JOB_NAME \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --environment ${{ env.AZURE_CONTAINER_ENV }} \
+            --image $IMAGE_URI \
+            --trigger-type Manual \
+            --replica-timeout 300 \
+            --replica-retry-limit 1 \
+            --replica-completion-count 1 \
+            --parallelism 1 \
+            --cpu 0.25 \
+            --memory 0.5Gi \
+            --env-vars \
+              TRANSPORT_MODE=stdio \
+              LOG_LEVEL=INFO \
+              PPT_TEMPLATE_PATH=/app/templates \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+        fi
+        
+    - name: Deploy Container App - HTTP Mode
+      if: env.TRANSPORT_MODE == 'http' || env.TRANSPORT_MODE == 'both'
+      run: |
+        APP_NAME="ppt-mcp-app-http"
+        IMAGE_URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push-image.outputs.image-tag }}"
+        
+        # Check if app exists
+        if az containerapp show --name $APP_NAME --resource-group ${{ env.AZURE_RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "Updating existing Container App: $APP_NAME"
+          az containerapp update \
+            --name $APP_NAME \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image $IMAGE_URI \
+            --set-env-vars \
+              TRANSPORT_MODE=http \
+              HTTP_PORT=8000 \
+              LOG_LEVEL=INFO \
+              PPT_TEMPLATE_PATH=/app/templates \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+        else
+          echo "Creating new Container App: $APP_NAME"
+          az containerapp create \
+            --name $APP_NAME \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --environment ${{ env.AZURE_CONTAINER_ENV }} \
+            --image $IMAGE_URI \
+            --target-port 8000 \
+            --ingress external \
+            --min-replicas 1 \
+            --max-replicas 3 \
+            --cpu 0.25 \
+            --memory 0.5Gi \
+            --env-vars \
+              TRANSPORT_MODE=http \
+              HTTP_PORT=8000 \
+              LOG_LEVEL=INFO \
+              PPT_TEMPLATE_PATH=/app/templates \
+            --registry-server ${{ env.REGISTRY }} \
+            --registry-username ${{ github.actor }} \
+            --registry-password ${{ secrets.GITHUB_TOKEN }}
+        fi
+        
+    - name: Get deployment information
+      run: |
+        echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push-image.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ env.DEPLOY_ENV }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Transport Mode**: ${{ env.TRANSPORT_MODE }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ env.TRANSPORT_MODE }}" = "stdio" ] || [ "${{ env.TRANSPORT_MODE }}" = "both" ]; then
+          echo "### Stdio Mode Job" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Start the stdio job manually:" >> $GITHUB_STEP_SUMMARY
+          echo "az containerapp job start --name ppt-mcp-job-stdio --resource-group ${{ env.AZURE_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ env.TRANSPORT_MODE }}" = "http" ] || [ "${{ env.TRANSPORT_MODE }}" = "both" ]; then
+          echo "### HTTP Mode App" >> $GITHUB_STEP_SUMMARY
+          HTTP_URL=$(az containerapp show --name ppt-mcp-app-http --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || echo "Not available")
+          echo "- **URL**: https://$HTTP_URL" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  test-deployment:
+    needs: [deploy-to-azure, build-and-push-image]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Test stdio deployment
+      if: env.TRANSPORT_MODE == 'stdio' || env.TRANSPORT_MODE == 'both'
+      run: |
+        echo "Testing stdio mode deployment..."
+        # Start the job
+        JOB_EXECUTION=$(az containerapp job start --name ppt-mcp-job-stdio --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query name -o tsv)
+        echo "Started job execution: $JOB_EXECUTION"
+        
+        # Wait for completion (with timeout)
+        timeout 120 bash -c '
+          while true; do
+            STATUS=$(az containerapp job execution show --name "'$JOB_EXECUTION'" --job-name ppt-mcp-job-stdio --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query properties.status -o tsv 2>/dev/null || echo "Unknown")
+            echo "Job status: $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            sleep 5
+          done
+        '
+        
+        # Check final status
+        FINAL_STATUS=$(az containerapp job execution show --name $JOB_EXECUTION --job-name ppt-mcp-job-stdio --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query properties.status -o tsv)
+        echo "Final job status: $FINAL_STATUS"
+        
+        if [ "$FINAL_STATUS" = "Succeeded" ]; then
+          echo "✅ Stdio mode deployment test passed"
+        else
+          echo "❌ Stdio mode deployment test failed"
+          exit 1
+        fi
+        
+    - name: Test HTTP deployment
+      if: env.TRANSPORT_MODE == 'http' || env.TRANSPORT_MODE == 'both'
+      run: |
+        echo "Testing HTTP mode deployment..."
+        HTTP_URL=$(az containerapp show --name ppt-mcp-app-http --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+        
+        if [ ! -z "$HTTP_URL" ] && [ "$HTTP_URL" != "null" ]; then
+          echo "HTTP URL: https://$HTTP_URL"
+          
+          # Test health endpoint with retries
+          for i in {1..10}; do
+            if curl -s --max-time 10 "https://$HTTP_URL/health" >/dev/null 2>&1; then
+              echo "✅ HTTP mode deployment test passed"
+              break
+            else
+              echo "Attempt $i/10 failed, waiting 10 seconds..."
+              sleep 10
+            fi
+            
+            if [ $i -eq 10 ]; then
+              echo "❌ HTTP mode deployment test failed after 10 attempts"
+              exit 1
+            fi
+          done
+        else
+          echo "❌ Could not retrieve HTTP URL"
+          exit 1
+        fi

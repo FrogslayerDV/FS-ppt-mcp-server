@@ -409,17 +409,35 @@ def get_server_info() -> Dict:
 def main(transport: str = "stdio", port: int = 8000):
     if transport == "http":
         import asyncio
-        # Set the port for HTTP transport
+        import logging
+        
+        # Set logging level from environment
+        log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+        logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
+        
+        print(f"Starting HTTP server on port {port}...")
+        
+        # Update app settings for HTTP mode
         app.settings.port = port
+        app.settings.log_level = log_level
+        
+        # FastMCP seems to bind to localhost only, which is a limitation
+        # for Docker containers. We'll need to document this for users.
+        
         # Start the FastMCP server with HTTP transport
         try:
-            app.run(transport='streamable-http')
+            # FastMCP uses 'sse' transport for HTTP/SSE mode
+            # Note: This binds to 127.0.0.1 by default which is only
+            # accessible inside the container
+            app.run(transport='sse')
         except asyncio.exceptions.CancelledError:
             print("Server stopped by user.")
         except KeyboardInterrupt:
             print("Server stopped by user.")
         except Exception as e:
             print(f"Error starting server: {e}")
+            import traceback
+            traceback.print_exc()
 
     else:
         # Run the FastMCP server

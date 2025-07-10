@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  ppt-mcp-http:
+    build:
+      context: .
+      dockerfile: Dockerfile.enhanced
+    container_name: ppt-mcp-http
+    ports:
+      - "8000:8001"  # External port 8000 maps to internal port 8001 (socat relay)
+    environment:
+      - TRANSPORT_MODE=http
+      - HTTP_PORT=8000
+      - LOG_LEVEL=INFO
+      - PPT_TEMPLATE_PATH=/app/templates
+    volumes:
+      - ./templates:/app/templates
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

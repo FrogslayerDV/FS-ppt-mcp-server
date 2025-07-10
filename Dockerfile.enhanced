@@ -1,0 +1,78 @@
+# Multi-stage build for optimal image size
+FROM python:3.10-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    python3-dev
+
+# Set work directory
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Production stage
+FROM python:3.10-alpine
+
+# Install minimal runtime dependencies
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    socat
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S appuser && \
+    adduser -S appuser -u 1001 -G appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy Python packages from builder stage
+COPY --from=builder /root/.local /home/appuser/.local
+
+# Copy application code
+COPY . .
+
+# Create templates directory if it doesn't exist
+RUN mkdir -p /app/templates
+
+# Change ownership of app directory to appuser
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Add local Python packages to PATH
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Set environment variables with defaults
+ENV TRANSPORT_MODE=stdio
+ENV HTTP_PORT=8000
+ENV PPT_TEMPLATE_PATH=/app/templates
+ENV LOG_LEVEL=INFO
+ENV PYTHONPATH=/app
+
+# Expose port conditionally (mainly for documentation)
+EXPOSE 8000
+
+# Health check script
+COPY --chown=appuser:appuser healthcheck.sh /app/healthcheck.sh
+RUN chmod +x /app/healthcheck.sh
+
+# Health check configuration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /app/healthcheck.sh
+
+# Copy and make entrypoint executable
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Use entrypoint for flexible mode switching
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# No default CMD - let entrypoint script handle arguments from environment variables
