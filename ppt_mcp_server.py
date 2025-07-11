@@ -7,6 +7,7 @@ import os
 import argparse
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
+from utils.resource_manager import get_resource_manager
 
 # import utils  # Currently unused
 from tools import (
@@ -368,22 +369,23 @@ def switch_presentation(presentation_id: str) -> Dict:
 def get_server_info() -> Dict:
     """Get information about the MCP server."""
     return {
-        "name": "PowerPoint MCP Server - Enhanced Edition",
-        "version": "2.1.0",
-        "total_tools": 32,  # Organized into 11 specialized modules
+        "name": "PowerPoint MCP Server - Enhanced Edition with MCP Resources",
+        "version": "2.3.0",
+        "total_tools": 36,  # Organized into 11 specialized modules + 4 resource tools
         "loaded_presentations": len(presentations),
         "current_presentation": current_presentation_id,
         "features": [
-            "Presentation Management (7 tools)",
-            "Content Management (6 tools)", 
+            "Presentation Management (8 tools)",
+            "Content Management (6 tools)",
             "Template Operations (7 tools)",
             "Structural Elements (4 tools)",
             "Professional Design (3 tools)",
-            "Specialized Features (5 tools)"
+            "Specialized Features (5 tools)",
+            "MCP Resource Management (4 tools)"
         ],
         "improvements": [
-            "32 specialized tools organized into 11 focused modules",
-            "68+ utility functions across 7 organized utility modules",
+            "36 specialized tools organized into 12 focused modules",
+            "68+ utility functions across 8 organized utility modules",
             "Enhanced parameter handling and validation",
             "Unified operation interfaces with comprehensive coverage",
             "Advanced template system with auto-generation capabilities",
@@ -393,7 +395,8 @@ def get_server_info() -> Dict:
             "Advanced visual effects and styling",
             "Content-aware optimization and validation",
             "Complete PowerPoint lifecycle management",
-            "Modular architecture for better maintainability"
+            "Modular architecture for better maintainability",
+            "MCP Resource-based file delivery system"
         ],
         "new_enhanced_features": [
             "Hyperlink Management - Add, update, remove, and list hyperlinks in text",
@@ -401,9 +404,132 @@ def get_server_info() -> Dict:
             "Advanced Text Run Formatting - Apply formatting to specific text runs",
             "Shape Connectors - Add connector lines and arrows between points",
             "Slide Master Management - Access and manage slide masters and layouts",
-            "Slide Transitions - Basic transition management (placeholder for future)"
+            "Slide Transitions - Basic transition management (placeholder for future)",
+            "MCP Resource File Delivery - Protocol-native file access via resource URIs",
+            "MCP Resource Save Method - All files delivered via MCP resource URIs",
+            "Automatic Resource Lifecycle Management - TTL-based cleanup and storage management"
         ]
     }
+
+# ---- Resource Handlers ----
+
+@app.resource("presentation://ppt-mcp-server/{presentation_id}/file")
+async def get_presentation_file(presentation_id: str) -> bytes:
+    """Handle presentation file resource requests."""
+    try:
+        # Get resource manager and look up the file path
+        resource_manager = get_resource_manager()
+        file_path = resource_manager.get_file_path(presentation_id)
+        
+        if not file_path:
+            raise FileNotFoundError(f"Presentation resource not found: {presentation_id}")
+        
+        # Read and return file content
+        with open(file_path, 'rb') as f:
+            return f.read()
+            
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve presentation file: {str(e)}")
+
+@app.resource("presentation://ppt-mcp-server/{presentation_id}/metadata")
+async def get_presentation_metadata(presentation_id: str) -> str:
+    """Handle presentation metadata resource requests."""
+    try:
+        # Get resource manager and metadata
+        resource_manager = get_resource_manager()
+        resource_info = resource_manager.get_resource(presentation_id)
+        
+        if not resource_info:
+            raise FileNotFoundError(f"Presentation resource not found: {presentation_id}")
+        
+        # Return metadata as JSON string
+        import json
+        metadata = {
+            "presentation_id": presentation_id,
+            "file_name": resource_info["file_name"],
+            "file_size": resource_info["file_size"],
+            "created_at": resource_info["created_at"].isoformat(),
+            "last_accessed": resource_info["last_accessed"].isoformat(),
+            "access_count": resource_info["access_count"],
+            "resource_uri": resource_info["resource_uri"],
+            "metadata": resource_info["metadata"]
+        }
+        
+        return json.dumps(metadata, indent=2)
+            
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve presentation metadata: {str(e)}")
+
+# ---- Additional Resource Tools ----
+
+@app.tool()
+def list_presentation_resources() -> Dict:
+    """List all presentation resources."""
+    try:
+        resource_manager = get_resource_manager()
+        resources = resource_manager.list_resources()
+        storage_info = resource_manager.get_storage_usage()
+        
+        return {
+            "resources": resources,
+            "storage_usage": storage_info,
+            "total_resources": len(resources)
+        }
+    except Exception as e:
+        return {
+            "error": f"Failed to list resources: {str(e)}"
+        }
+
+@app.tool()
+def get_resource_info(presentation_id: str) -> Dict:
+    """Get detailed information about a specific resource."""
+    try:
+        resource_manager = get_resource_manager()
+        resource_info = resource_manager.get_resource(presentation_id)
+        
+        if not resource_info:
+            return {
+                "error": f"Resource not found: {presentation_id}"
+            }
+        
+        return {
+            "presentation_id": presentation_id,
+            "file_name": resource_info["file_name"],
+            "file_size": resource_info["file_size"],
+            "created_at": resource_info["created_at"].isoformat(),
+            "last_accessed": resource_info["last_accessed"].isoformat(),
+            "access_count": resource_info["access_count"],
+            "resource_uri": resource_info["resource_uri"],
+            "metadata": resource_info["metadata"]
+        }
+    except Exception as e:
+        return {
+            "error": f"Failed to get resource info: {str(e)}"
+        }
+
+@app.tool()
+def cleanup_resources(max_age_hours: int = 24) -> Dict:
+    """Manually clean up old resources."""
+    try:
+        resource_manager = get_resource_manager()
+        
+        # Temporarily set retention policy and cleanup
+        original_retention = resource_manager.retention_hours
+        resource_manager.retention_hours = max_age_hours
+        
+        cleaned_count = resource_manager.cleanup_expired_resources()
+        
+        # Restore original retention policy
+        resource_manager.retention_hours = original_retention
+        
+        return {
+            "message": f"Cleaned up {cleaned_count} resources older than {max_age_hours} hours",
+            "cleaned_count": cleaned_count
+        }
+    except Exception as e:
+        return {
+            "error": f"Failed to cleanup resources: {str(e)}"
+        }
 
 # ---- Main Function ----
 def main(transport: str = "stdio", port: int = 8000):

@@ -8,6 +8,7 @@ from .presentation_utils import *
 from .content_utils import *
 from .design_utils import *
 from .validation_utils import *
+from .resource_manager import get_resource_manager, shutdown_resource_manager
 
 __all__ = [
     # Core utilities
@@ -65,5 +66,9 @@ __all__ = [
     
     # Validation utilities
     "validate_text_fit",
-    "validate_and_fix_slide"
+    "validate_and_fix_slide",
+    
+    # Resource management utilities
+    "get_resource_manager",
+    "shutdown_resource_manager"
 ]

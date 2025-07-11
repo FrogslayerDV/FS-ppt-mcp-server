@@ -4,8 +4,11 @@ Handles presentation creation, opening, saving, and core properties.
 """
 from typing import Dict, List, Optional, Any
 import os
+import base64
+from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 import utils as ppt_utils
+from utils.resource_manager import get_resource_manager
 
 
 def register_presentation_tools(app: FastMCP, presentations: Dict, get_current_presentation_id, get_template_search_directories):
@@ -122,6 +125,128 @@ def register_presentation_tools(app: FastMCP, presentations: Dict, get_current_p
                 "message": f"Presentation saved to {saved_path}",
                 "file_path": saved_path
             }
+        except Exception as e:
+            return {
+                "error": f"Failed to save presentation: {str(e)}"
+            }
+
+    @app.tool()
+    def save_presentation_resource(
+        file_path: str,
+        presentation_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Save presentation and make it available via MCP resource URI.
+        
+        All files are automatically registered as MCP resources for seamless client access.
+        This is the pure resource-based delivery method.
+        
+        Args:
+            file_path: Path where the file should be saved
+            presentation_id: ID of presentation to save (uses current if None)
+            
+        Returns:
+            Dictionary containing:
+            - status: 'success' or 'error'
+            - file_path: Where the file was saved
+            - file_size: Size of the saved file in bytes
+            - resource_uri: MCP resource URI for accessing the file
+            - saved_at: ISO timestamp of save operation
+        """
+        # Use the specified presentation or the current one
+        pres_id = presentation_id if presentation_id is not None else get_current_presentation_id()
+        
+        if pres_id is None or pres_id not in presentations:
+            return {
+                "error": "No presentation is currently loaded or the specified ID is invalid"
+            }
+        
+        # Save the presentation
+        try:
+            saved_path = ppt_utils.save_presentation(presentations[pres_id], file_path)
+            file_size = os.path.getsize(saved_path)
+            
+            # Register as MCP resource
+            resource_manager = get_resource_manager()
+            resource_uri = resource_manager.register(
+                presentation_id=pres_id,
+                file_path=saved_path,
+                metadata={
+                    "original_filename": os.path.basename(file_path),
+                    "saved_at": datetime.utcnow().isoformat()
+                }
+            )
+            
+            return {
+                "status": "success",
+                "file_path": saved_path,
+                "file_size": file_size,
+                "resource_uri": resource_uri,
+                "saved_at": datetime.utcnow().isoformat(),
+                "message": f"Presentation saved and available via MCP resource: {resource_uri}"
+            }
+            
+        except Exception as e:
+            return {
+                "error": f"Failed to save presentation: {str(e)}"
+            }
+
+    @app.tool()
+    def save_presentation_resource(
+        file_path: str,
+        presentation_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Save presentation and make it available via MCP resource URI.
+        
+        This is the simplified, resource-only version of save_presentation_hybrid.
+        All files are automatically registered as MCP resources for seamless client access.
+        
+        Args:
+            file_path: Path where the file should be saved
+            presentation_id: ID of presentation to save (uses current if None)
+            
+        Returns:
+            Dictionary containing:
+            - status: 'success' or 'error'
+            - file_path: Where the file was saved
+            - file_size: Size of the saved file in bytes
+            - resource_uri: MCP resource URI for accessing the file
+            - saved_at: ISO timestamp of save operation
+        """
+        # Use the specified presentation or the current one
+        pres_id = presentation_id if presentation_id is not None else get_current_presentation_id()
+        
+        if pres_id is None or pres_id not in presentations:
+            return {
+                "error": "No presentation is currently loaded or the specified ID is invalid"
+            }
+        
+        # Save the presentation
+        try:
+            saved_path = ppt_utils.save_presentation(presentations[pres_id], file_path)
+            file_size = os.path.getsize(saved_path)
+            
+            # Register as MCP resource
+            resource_manager = get_resource_manager()
+            resource_uri = resource_manager.register(
+                presentation_id=pres_id,
+                file_path=saved_path,
+                metadata={
+                    "original_filename": os.path.basename(file_path),
+                    "saved_at": datetime.utcnow().isoformat()
+                }
+            )
+            
+            return {
+                "status": "success",
+                "file_path": saved_path,
+                "file_size": file_size,
+                "resource_uri": resource_uri,
+                "saved_at": datetime.utcnow().isoformat(),
+                "message": f"Presentation saved and available via MCP resource: {resource_uri}"
+            }
+            
         except Exception as e:
             return {
                 "error": f"Failed to save presentation: {str(e)}"
