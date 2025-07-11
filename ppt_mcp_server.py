@@ -6,7 +6,7 @@ Consolidated version with 20 tools organized into multiple modules.
 import os
 import argparse
 from typing import Dict, Any
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from utils.resource_manager import get_resource_manager
 
 # import utils  # Currently unused
@@ -25,10 +25,7 @@ from tools import (
 
 # Initialize the FastMCP server
 app = FastMCP(
-    name="ppt-mcp-server",
-    description="MCP Server for PowerPoint manipulation using python-pptx - Consolidated Edition",
-    version="2.0.0", 
-    log_level="INFO"
+    name="ppt-mcp-server"
 )
 
 # Global state to store presentations in memory
@@ -414,21 +411,44 @@ def get_server_info() -> Dict:
 # ---- Resource Handlers ----
 
 @app.resource("presentation://ppt-mcp-server/{presentation_id}/file")
-async def get_presentation_file(presentation_id: str) -> bytes:
+def get_presentation_file(presentation_id: str) -> bytes:
     """Handle presentation file resource requests."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
+        logger.info(f"Resource handler called for presentation_id: {presentation_id}")
+        
         # Get resource manager and look up the file path
         resource_manager = get_resource_manager()
+        logger.info(f"Resource manager obtained: {resource_manager}")
+        
         file_path = resource_manager.get_file_path(presentation_id)
+        logger.info(f"File path resolved: {file_path}")
         
         if not file_path:
+            logger.error(f"File path is None/empty for presentation_id: {presentation_id}")
             raise FileNotFoundError(f"Presentation resource not found: {presentation_id}")
+        
+        # Check if file exists and get size
+        import os
+        if not os.path.exists(file_path):
+            logger.error(f"File does not exist at path: {file_path}")
+            raise FileNotFoundError(f"File not found at path: {file_path}")
+        
+        file_size = os.path.getsize(file_path)
+        logger.info(f"File exists, size: {file_size} bytes")
         
         # Read and return file content
         with open(file_path, 'rb') as f:
-            return f.read()
+            content = f.read()
+            logger.info(f"Successfully read {len(content)} bytes from file")
+            logger.info(f"Content type: {type(content)}")
+            logger.info(f"Content preview (first 50 bytes): {content[:50]}")
+            return content
             
     except Exception as e:
+        logger.error(f"Exception in resource handler: {str(e)}")
         raise RuntimeError(f"Failed to retrieve presentation file: {str(e)}")
 
 @app.resource("presentation://ppt-mcp-server/{presentation_id}/metadata")
@@ -541,21 +561,14 @@ def main(transport: str = "stdio", port: int = 8000):
         log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
         logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
         
-        print(f"Starting HTTP server on port {port}...")
-        
-        # Update app settings for HTTP mode
-        app.settings.port = port
-        app.settings.log_level = log_level
-        
-        # FastMCP seems to bind to localhost only, which is a limitation
-        # for Docker containers. We'll need to document this for users.
+        # Get host from environment variable, default to localhost
+        host = os.environ.get('HTTP_HOST', 'localhost')
+        print(f"Starting HTTP server on {host}:{port}...")
         
         # Start the FastMCP server with HTTP transport
         try:
-            # FastMCP uses 'sse' transport for HTTP/SSE mode
-            # Note: This binds to 127.0.0.1 by default which is only
-            # accessible inside the container
-            app.run(transport='sse')
+            # FastMCP supports direct host/port binding
+            app.run(transport='sse', host=host, port=port)
         except asyncio.exceptions.CancelledError:
             print("Server stopped by user.")
         except KeyboardInterrupt:
@@ -566,7 +579,7 @@ def main(transport: str = "stdio", port: int = 8000):
             traceback.print_exc()
 
     else:
-        # Run the FastMCP server
+        # Run the FastMCP server with stdio transport
         app.run(transport='stdio')
 
 if __name__ == "__main__":

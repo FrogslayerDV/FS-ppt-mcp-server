@@ -3,7 +3,9 @@
     "ppt-mcp-server": {
       "url": "http://localhost:8000/sse",
       "transport": "sse",
-      "alwaysAllow": []
+      "alwaysAllow": [
+        "get_resource_info"
+      ]
     }
   }
 }

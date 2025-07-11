@@ -190,24 +190,11 @@ else
         exit 1
     fi
     
-    # Start socat to forward from 0.0.0.0:8000 to localhost:8000
-    log_info "Starting TCP relay to make server accessible from outside container..."
-    socat TCP-LISTEN:8001,fork,reuseaddr,bind=0.0.0.0 TCP:localhost:8000 &
-    SOCAT_PID=$!
+    log_info "Server is accessible on port $HTTP_PORT from outside the container"
     
-    log_info "Server is accessible on port 8001 from outside the container"
-    
-    # Wait for either process to exit
-    wait -n $SERVER_PID $SOCAT_PID
+    # Wait for server process to exit
+    wait $SERVER_PID
     EXIT_CODE=$?
-    
-    # Kill the other process
-    if kill -0 $SERVER_PID 2>/dev/null; then
-        kill $SERVER_PID
-    fi
-    if kill -0 $SOCAT_PID 2>/dev/null; then
-        kill $SOCAT_PID
-    fi
 fi
 
 # Log exit information
