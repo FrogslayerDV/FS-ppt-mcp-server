@@ -1,0 +1,26 @@
+# Azure Configuration
+location            = "eastus"
+resource_group_name = "rg-ppt-mcp"
+environment_name    = "prod"
+
+# GitHub Configuration
+github_username = "your-github-username"
+# github_token is provided via environment variable or command line
+
+# Container Configuration
+container_image = "ghcr.io/your-github-username/ppt-mcp-server:latest"
+transport_mode  = "http"
+log_level       = "INFO"
+
+# Resource Configuration
+container_cpu       = 0.25
+container_memory    = "0.5Gi"
+replica_timeout     = 300
+replica_retry_limit = 1
+
+# Additional Tags
+tags = {
+  Owner       = "your-name"
+  Cost-Center = "development"
+  Department  = "engineering"
+}

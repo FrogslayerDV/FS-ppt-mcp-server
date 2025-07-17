@@ -1,0 +1,137 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.enhanced
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Generate image reference
+        id: image
+        run: echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.6.0
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+      
+      - name: Initialize OpenTofu
+        working-directory: ./infrastructure
+        run: |
+          tofu init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+            -backend-config="key=ppt-mcp.tfstate"
+      
+      - name: Validate OpenTofu Configuration
+        working-directory: ./infrastructure
+        run: tofu validate
+      
+      - name: Plan OpenTofu Changes
+        working-directory: ./infrastructure
+        run: |
+          tofu plan \
+            -var="github_username=${{ github.actor }}" \
+            -var="github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -var="container_image=${{ needs.build.outputs.image }}" \
+            -out=tfplan
+      
+      - name: Apply OpenTofu Changes
+        if: github.ref == 'refs/heads/main'
+        working-directory: ./infrastructure
+        run: tofu apply -auto-approve tfplan
+      
+      - name: Display Deployment Info
+        if: github.ref == 'refs/heads/main'
+        working-directory: ./infrastructure
+        run: |
+          echo "## Deployment Complete! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Resources Created:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource Group**: \`$(tofu output -raw resource_group_name)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container Apps Job**: \`$(tofu output -raw container_apps_job_name)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container Apps Environment**: \`$(tofu output -raw container_apps_environment_name)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Log Analytics Workspace**: \`$(tofu output -raw log_analytics_workspace_name)\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Management Commands:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Start the Container Apps Job" >> $GITHUB_STEP_SUMMARY
+          tofu output -raw deployment_commands | jq -r '.start_job' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# View logs" >> $GITHUB_STEP_SUMMARY
+          tofu output -raw deployment_commands | jq -r '.view_logs' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# List executions" >> $GITHUB_STEP_SUMMARY
+          tofu output -raw deployment_commands | jq -r '.list_executions' >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
