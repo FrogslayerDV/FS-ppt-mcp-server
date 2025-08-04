@@ -1,0 +1,1 @@
+{"Modules":[{"Key":"","Source":"","Dir":"."},{"Key":"aca-containers","Source":"./aca/container-app","Dir":"aca/container-app"},{"Key":"aca-environment","Source":"./aca","Dir":"aca"},{"Key":"monitoring","Source":"./modules/monitoring","Dir":"modules/monitoring"}]}

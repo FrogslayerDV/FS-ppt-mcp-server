@@ -33,50 +33,10 @@ variable "container_image" {
   default     = "ghcr.io/yourusername/ppt-mcp-server:latest"
 }
 
-variable "transport_mode" {
-  description = "Transport mode for the MCP server"
+variable "containers_file" {
+  description = "Path to the container definitions YAML file"
   type        = string
-  default     = "http"
-  
-  validation {
-    condition     = contains(["http", "stdio"], var.transport_mode)
-    error_message = "Transport mode must be either 'http' or 'stdio'."
-  }
-}
-
-variable "log_level" {
-  description = "Log level for the application"
-  type        = string
-  default     = "INFO"
-  
-  validation {
-    condition     = contains(["DEBUG", "INFO", "WARNING", "ERROR"], var.log_level)
-    error_message = "Log level must be one of: DEBUG, INFO, WARNING, ERROR."
-  }
-}
-
-variable "container_cpu" {
-  description = "CPU allocation for the container"
-  type        = number
-  default     = 0.25
-}
-
-variable "container_memory" {
-  description = "Memory allocation for the container"
-  type        = string
-  default     = "0.5Gi"
-}
-
-variable "replica_timeout" {
-  description = "Timeout for container replica in seconds"
-  type        = number
-  default     = 300
-}
-
-variable "replica_retry_limit" {
-  description = "Retry limit for container replica"
-  type        = number
-  default     = 1
+  default     = "container-definitions.yml"
 }
 
 variable "tags" {

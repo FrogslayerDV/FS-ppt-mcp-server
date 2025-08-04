@@ -1,0 +1,32 @@
+# Container definitions for PPT MCP Server
+# This file defines the container configurations for deployment
+
+ppt-mcp-server:
+  ingress_port: 8000
+  containers:
+    - name: "main"
+      image: "${CONTAINER_IMAGE}"  # Will be replaced by terraform variable
+      cpu: 0.5
+      memory: "1Gi"
+      env_vars:
+        TRANSPORT_MODE: "http"
+        LOG_LEVEL: "INFO"
+        PPT_TEMPLATE_PATH: "/app/templates"
+        HTTP_PORT: "8000"
+        HTTP_HOST: "0.0.0.0"
+        
+# Example of how to add a development version with different settings
+ppt-mcp-server-dev:
+  ingress_port: 8001
+  containers:
+    - name: "main"
+      image: "${CONTAINER_IMAGE}"
+      cpu: 0.25
+      memory: "512Mi"
+      env_vars:
+        TRANSPORT_MODE: "http"
+        LOG_LEVEL: "DEBUG"
+        PPT_TEMPLATE_PATH: "/app/templates"
+        HTTP_PORT: "8001"
+        HTTP_HOST: "0.0.0.0"
+        DEV_MODE: "true"

@@ -8,24 +8,33 @@ output "resource_group_id" {
   value       = azurerm_resource_group.main.id
 }
 
-output "container_apps_job_name" {
-  description = "Name of the Container Apps Job"
-  value       = module.container_apps_job.name
-}
-
-output "container_apps_job_id" {
-  description = "ID of the Container Apps Job"
-  value       = module.container_apps_job.id
-}
-
 output "container_apps_environment_name" {
   description = "Name of the Container Apps Environment"
-  value       = module.container_apps_env.name
+  value       = module.aca-environment.name
 }
 
 output "container_apps_environment_id" {
   description = "ID of the Container Apps Environment"
-  value       = module.container_apps_env.id
+  value       = module.aca-environment.id
+}
+
+output "container_apps" {
+  description = "Information about deployed container apps"
+  value = {
+    for name, app in module.aca-containers : name => {
+      name                  = app.name
+      app_url               = app.app_url
+      outbound_ip_addresses = app.outbound_ip_addresses
+      latest_revision_name  = app.latest_revision_name
+    }
+  }
+}
+
+output "container_app_urls" {
+  description = "URLs of the deployed container apps"
+  value = {
+    for name, app in module.aca-containers : name => "https://${app.app_url}"
+  }
 }
 
 output "log_analytics_workspace_id" {
@@ -39,10 +48,12 @@ output "log_analytics_workspace_name" {
 }
 
 output "deployment_commands" {
-  description = "Commands to execute the Container Apps Job"
+  description = "Commands to manage the Container Apps"
   value = {
-    start_job = "az containerapp job start --name ${module.container_apps_job.name} --resource-group ${azurerm_resource_group.main.name}"
-    view_logs = "az containerapp logs show --name ${module.container_apps_job.name} --resource-group ${azurerm_resource_group.main.name} --follow"
-    list_executions = "az containerapp job execution list --name ${module.container_apps_job.name} --resource-group ${azurerm_resource_group.main.name} --output table"
+    for name, app in module.aca-containers : "${name}_commands" => {
+      view_logs      = "az containerapp logs show --name ${app.name} --resource-group ${azurerm_resource_group.main.name} --follow"
+      show_app       = "az containerapp show --name ${app.name} --resource-group ${azurerm_resource_group.main.name}"
+      list_revisions = "az containerapp revision list --name ${app.name} --resource-group ${azurerm_resource_group.main.name} --output table"
+    }
   }
 }
